@@ -62,10 +62,7 @@ public class RemoteSynonymFile implements SynonymFile {
         this.format = format;
         this.env = env;
         this.location = location;
-
         this.httpclient = AccessController.doPrivileged((PrivilegedAction<CloseableHttpClient>) HttpClients::createDefault);
-
-        isNeedReloadSynonymMap();
     }
 
     static SynonymMap.Builder getSynonymParser(
@@ -83,13 +80,21 @@ public class RemoteSynonymFile implements SynonymFile {
     }
 
     @Override
-    public SynonymMap reloadSynonymMap() {
+    public SynonymMap reloadSynonymMap(boolean isFirstInit) {
         Reader rulesReader = null;
         try {
             logger.info("start reload remote synonym from {}.", location);
             rulesReader = getReader();
-            SynonymMap.Builder parser;
 
+            if (rulesReader == null) {
+                if (!isFirstInit) {
+                    return null;
+                } else {
+                    rulesReader = new StringReader("");
+                }
+            }
+
+            SynonymMap.Builder parser;
             parser = getSynonymParser(rulesReader, format, expand, lenient, analyzer);
             return parser.build();
         } catch (Exception e) {
@@ -123,7 +128,7 @@ public class RemoteSynonymFile implements SynonymFile {
      * Download custom terms from a remote server
      */
     public Reader getReader() {
-        Reader reader;
+        Reader reader = null;
         RequestConfig rc = RequestConfig.custom()
                 .setConnectionRequestTimeout(10 * 1000)
                 .setConnectTimeout(10 * 1000).setSocketTimeout(60 * 1000)
@@ -134,7 +139,8 @@ public class RemoteSynonymFile implements SynonymFile {
         get.setConfig(rc);
         try {
             response = executeHttpRequest(get);
-            if (response.getStatusLine().getStatusCode() == 200) {
+            int httpResponseCode = response.getStatusLine().getStatusCode();
+            if (httpResponseCode == 200) {
                 String charset = "UTF-8"; // 获取编码，默认为utf-8
                 if (response.getEntity().getContentType().getValue()
                         .contains("charset=")) {
@@ -154,13 +160,14 @@ public class RemoteSynonymFile implements SynonymFile {
                             .append(System.getProperty("line.separator"));
                 }
                 reader = new StringReader(sb.toString());
-            } else reader = new StringReader("");
+            } else if (httpResponseCode == 404) {
+                //文件被删除了
+                logger.error("read remote synonym  file with 404 status code:{}", httpResponseCode);
+            } else {
+                logger.error("read remote synonym  file with un expect status code:{}", httpResponseCode);
+            }
         } catch (Exception e) {
             logger.error("get remote synonym reader {} error!", location, e);
-//            throw new IllegalArgumentException(
-//                    "Exception while reading remote synonyms file", e);
-            // Fix #54 Returns blank if synonym file has be deleted.
-            reader = new StringReader("");
         } finally {
             try {
                 if (br != null) {
@@ -205,6 +212,8 @@ public class RemoteSynonymFile implements SynonymFile {
                     eTags = response.getLastHeader(ETAG_HEADER) == null ? null
                             : response.getLastHeader(ETAG_HEADER).getValue();
                     return true;
+                } else {
+                    logger.info("synonym {}  not changed after latest update,", location);
                 }
             } else if (response.getStatusLine().getStatusCode() == 304) {
                 return false;
@@ -218,7 +227,7 @@ public class RemoteSynonymFile implements SynonymFile {
                     response.close();
                 }
             } catch (IOException e) {
-                logger.error("failed to close http response", e);
+                logger.error("failed to close remote synonym http response", e);
             }
         }
         return false;

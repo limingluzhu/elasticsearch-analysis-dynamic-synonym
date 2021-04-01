@@ -12,7 +12,7 @@ import java.io.Reader;
  */
 public interface SynonymFile {
 
-    SynonymMap reloadSynonymMap();
+    SynonymMap reloadSynonymMap(boolean isFirstInit);
 
     boolean isNeedReloadSynonymMap();
 

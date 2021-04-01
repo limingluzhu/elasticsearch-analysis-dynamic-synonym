@@ -74,8 +74,8 @@ public class DynamicSynonymTokenFilterFactory extends
         }
         if (settings.get("ignore_case") != null) {
             DEPRECATION_LOGGER.deprecated(
-                "The ignore_case option on the synonym_graph filter is deprecated. " +
-                    "Instead, insert a lowercase filter in the filter chain before the synonym_graph filter.");
+                    "The ignore_case option on the synonym_graph filter is deprecated. " +
+                            "Instead, insert a lowercase filter in the filter chain before the synonym_graph filter.");
         }
 
         this.interval = settings.getAsInt("interval", 60);
@@ -107,6 +107,7 @@ public class DynamicSynonymTokenFilterFactory extends
     ) {
         final Analyzer analyzer = buildSynonymAnalyzer(tokenizer, charFilters, previousTokenFilters, allFilters);
         synonymMap = buildSynonyms(analyzer);
+
         final String name = name();
         return new TokenFilterFactory() {
             @Override
@@ -148,6 +149,7 @@ public class DynamicSynonymTokenFilterFactory extends
             Function<String, TokenFilterFactory> allFilters
     ) {
         return new CustomAnalyzer(
+                "dynamic_synonym",
                 tokenizer,
                 charFilters.toArray(new CharFilterFactory[0]),
                 tokenFilters.stream().map(TokenFilterFactory::getSynonymFilter).toArray(TokenFilterFactory[]::new)
@@ -156,7 +158,7 @@ public class DynamicSynonymTokenFilterFactory extends
 
     SynonymMap buildSynonyms(Analyzer analyzer) {
         try {
-            return getSynonymFile(analyzer).reloadSynonymMap();
+            return getSynonymFile(analyzer).reloadSynonymMap(true);
         } catch (Exception e) {
             logger.error("failed to build synonyms", e);
             throw new IllegalArgumentException("failed to build synonyms", e);
@@ -168,14 +170,14 @@ public class DynamicSynonymTokenFilterFactory extends
             SynonymFile synonymFile;
             if (location.startsWith("http://") || location.startsWith("https://")) {
                 synonymFile = new RemoteSynonymFile(
-                        environment, analyzer, expand, lenient,  format, location);
+                        environment, analyzer, expand, lenient, format, location);
             } else {
                 synonymFile = new LocalSynonymFile(
                         environment, analyzer, expand, lenient, format, location);
             }
             if (scheduledFuture == null) {
                 scheduledFuture = pool.scheduleAtFixedRate(new Monitor(synonymFile),
-                                interval, interval, TimeUnit.SECONDS);
+                        interval, interval, TimeUnit.SECONDS);
             }
             return synonymFile;
         } catch (Exception e) {
@@ -194,12 +196,18 @@ public class DynamicSynonymTokenFilterFactory extends
 
         @Override
         public void run() {
-            if (synonymFile.isNeedReloadSynonymMap()) {
-                synonymMap = synonymFile.reloadSynonymMap();
+
+            boolean isNeedReloadSynonym = synonymFile.isNeedReloadSynonymMap();
+            if (isNeedReloadSynonym) {
+                logger.info("start update synonymMap");
+                synonymMap = synonymFile.reloadSynonymMap(false);
+                if (synonymMap == null) {
+                    return;
+                }
                 for (AbsSynonymFilter dynamicSynonymFilter : dynamicSynonymFilters.keySet()) {
                     dynamicSynonymFilter.update(synonymMap);
-                    logger.info("success reload synonym");
                 }
+                logger.info("finish update synonymMap");
             }
         }
     }

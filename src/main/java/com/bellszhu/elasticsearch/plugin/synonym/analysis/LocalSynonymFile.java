@@ -10,12 +10,7 @@ import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.synonym.SynonymMap;
 import org.elasticsearch.env.Environment;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.Reader;
-import java.io.StringReader;
+import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -56,16 +51,21 @@ public class LocalSynonymFile implements SynonymFile {
         this.location = location;
 
         this.synonymFilePath = deepSearch();
-        isNeedReloadSynonymMap();
     }
 
     @Override
-    public SynonymMap reloadSynonymMap() {
+    public SynonymMap reloadSynonymMap(boolean isFirstInit) {
         try {
             logger.info("start reload local synonym from {}.", synonymFilePath);
             Reader rulesReader = getReader();
-            SynonymMap.Builder parser = RemoteSynonymFile.getSynonymParser(
-                    rulesReader, format, expand, lenient, analyzer);
+            if (rulesReader == null) {
+                if (!isFirstInit) {
+                    return null;
+                } else {
+                    rulesReader = new StringReader("");
+                }
+            }
+            SynonymMap.Builder parser = RemoteSynonymFile.getSynonymParser(rulesReader, format, expand, lenient, analyzer);
             return parser.build();
         } catch (Exception e) {
             logger.error("reload local synonym {} error!", synonymFilePath, e);
@@ -93,12 +93,15 @@ public class LocalSynonymFile implements SynonymFile {
                 sb.append(line).append(System.getProperty("line.separator"));
             }
             return new StringReader(sb.toString());
+        } catch (FileNotFoundException e) {
+            logger.error("get local synonym reader {} error,FileNotFound!", location, e);
+            return null;
         } catch (IOException e) {
             logger.error("get local synonym reader {} error!", location, e);
 //            throw new IllegalArgumentException(
 //                    "IOException while reading local synonyms file", e);
 //            Fix #54 Returns blank if synonym file has be deleted.
-            return new StringReader("");
+            return null;
         }
     }
 
